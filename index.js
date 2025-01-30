@@ -1,7 +1,8 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
-require("dotenv").config();
+
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 var jwt = require("jsonwebtoken");
 // var token = jwt.sign({ foo: "bar" }, "shhhhh");
@@ -9,12 +10,20 @@ const app = express();
 const port = process.env.PORT || 5000;
 const stripe = require("stripe")(process.env.STRIPE_SECRETE_KEY);
 
-app.use(
-  cors({
-    origin: ["http://localhost:5173"],
-    credentials: true,
-  })
-);
+// app.use(
+//   cors({
+//     origin: ["https://assignment-12-3dfb6.web.app", "http://localhost:5173"],
+//     methods: ["GET", "POST", "DELETE", "PUT", "PATCH"],
+//     allowedHeaders: ["Content-Type", "Authorization"],
+//     credentials: true,
+//   })
+// );
+const corsOptions = {
+  origin: ["http://localhost:5173", "https://assignment-12-3dfb6.web.app"],
+  credentials: true,
+  optionSuccessStatus: 200,
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
 
@@ -55,7 +64,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const coffeeCollection = client.db("coffeeDB").collection("coffee");
 
@@ -73,6 +82,9 @@ async function run() {
       .db("tourGuidesCollection")
       .collection("tourGuides");
     const storyCollection = client.db("stories").collection("storyCollection");
+    const reqtojoinGuideCollection = client
+      .db("joinGuideReqs")
+      .collection("joinGuideReqsCollection");
 
     const verifyAdmin = async (req, res, next) => {
       const email = req.user.email;
@@ -80,6 +92,16 @@ async function run() {
       const user = await userCollection.findOne(query);
       const isAdmin = user?.role === "admin";
       if (!isAdmin) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
+    const verifyTourGuide = async (req, res, next) => {
+      const email = req.user.email;
+      const query = { email: email };
+      const user = await userCollection.findOne(query);
+      const isTourGuide = user?.role === "tourGuide";
+      if (!isTourGuide) {
         return res.status(403).send({ message: "forbidden access" });
       }
       next();
@@ -120,16 +142,34 @@ async function run() {
     });
 
     // tour assginment 12 related
-    app.get("/api/packages/random", async (req, res) => {
+
+    app.post("/reqToJoinGuide", async (req, res) => {
+      const reqtojoin = req.body;
+      console.log(reqtojoin);
+      const result = await reqtojoinGuideCollection.insertOne(reqtojoin);
+      res.send(result);
+    });
+
+    app.get(
+      "/reqsOfJoiningGuides",
+      // verifytoken,
+      // verifyAdmin,
+      async (req, res) => {
+        const reqsToJoin = await reqtojoinGuideCollection.find().toArray();
+        res.json(reqsToJoin);
+      }
+    );
+
+    app.get("/api/allPackages", async (req, res) => {
       const packages = await packageCollection.find().toArray();
       res.json(packages);
     });
-    // app.get("/api/packages/random", async (req, res) => {
-    //   const packages = await packageCollection
-    //     .aggregate([{ $sample: { size: 3 } }])
-    //     .toArray();
-    //   res.json(packages);
-    // });
+    app.get("/api/packages/random", async (req, res) => {
+      const packages = await packageCollection
+        .aggregate([{ $sample: { size: 3 } }])
+        .toArray();
+      res.json(packages);
+    });
     app.get("/api/tour-guides/random", async (req, res) => {
       const tourGuides = await tourGuidesCollection
         .aggregate([{ $sample: { size: 6 } }])
@@ -148,6 +188,21 @@ async function run() {
       const stories = await storyCollection.find().toArray();
       res.json(stories);
     });
+    app.get("/api/story/:email", async (req, res) => {
+      const userEmail = req.params.email;
+      const stories = await storyCollection
+        .find({ email: userEmail })
+        .toArray();
+      res.json(stories);
+    });
+
+    app.post("/addpackageByAdmin", async (req, res) => {
+      const package = req.body;
+      //  console.log(package);
+      const result = await packageCollection.insertOne(package);
+      res.send(result);
+    });
+
     app.get("/package/:id", async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
@@ -172,12 +227,18 @@ async function run() {
     //   res.json(result);
     // });
     // Endpoint to update a story
+    app.get("/api/stories/:id", async (req, res) => {
+      const { id } = req.params;
+      const query = { _id: new ObjectId(id) };
+      const result = await storyCollection.findOne(query);
+      res.json(result);
+    });
     app.put("/api/stories/:id", async (req, res) => {
       const { id } = req.params;
       const { title, text, images } = req.body;
       const updateStory = { title, text, images };
       const result = await storyCollection.updateOne(
-        { _id: ObjectId(id) },
+        { _id: new ObjectId(id) },
         { $set: updateStory }
       );
       res.json(result);
@@ -188,7 +249,7 @@ async function run() {
       const { id } = req.params;
       const { images } = req.body;
       const result = await storyCollection.updateOne(
-        { _id: ObjectId(id) },
+        { _id: new ObjectId(id) },
         { $push: { images: { $each: images } } }
       );
       res.json(result);
@@ -199,7 +260,7 @@ async function run() {
       const { id } = req.params;
       const { imageUrl } = req.body;
       const result = await storyCollection.updateOne(
-        { _id: ObjectId(id) },
+        { _id: new ObjectId(id) },
         { $pull: { images: imageUrl } }
       );
       res.json(result);
@@ -207,23 +268,9 @@ async function run() {
     // Endpoint to delete a story
     app.delete("/api/stories/:id", async (req, res) => {
       const { id } = req.params;
-      const result = await storyCollection.deleteOne({ _id: ObjectId(id) });
+      const result = await storyCollection.deleteOne({ _id: new ObjectId(id) });
       res.json(result);
     });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     // visa related apis
     app.get("/visas", async (req, res) => {
@@ -304,10 +351,10 @@ async function run() {
     });
 
     // nicher eta nia kaj korte hbe
-    app.get("/applyvisa/:userEmail", verifytoken, async (req, res) => {
+    app.get("/applyvisa/:userEmail", async (req, res) => {
       const email = req.params.userEmail;
       const query = { email: email };
-      if (req.user.email !== email) {
+      if (req?.user?.email !== email) {
         return res
           .status(403)
           .send({ message: "forbidden accees dure giya mor" });
@@ -444,8 +491,30 @@ async function run() {
     // Users related apis
     app.get(
       "/user/admin/:email",
+      // verifytoken,
+      // verifyAdmin,
+      async (req, res) => {
+        const email = req.params.email;
+        const query = { email: email };
+        // if (req.user.email !== email) {
+        //   return res
+        //     .status(403)
+        //     .send({ message: "forbidden accees dure giya mor" });
+        // }
+        const user = await userCollection.findOne(query);
+        // let admin = false
+        if (user) {
+          console.log(user?.role);
+          user?.role === "admin"
+            ? res.send({ admin: true })
+            : res.send({ admin: false });
+        }
+      }
+    );
+    app.get(
+      "/user/touristGuide/:email",
       verifytoken,
-      verifyAdmin,
+      verifyTourGuide,
       async (req, res) => {
         const email = req.params.email;
         const query = { email: email };
@@ -458,16 +527,15 @@ async function run() {
         // let admin = false
         if (user) {
           console.log(user?.role);
-          user?.role === "admin"
-            ? res.send({ admin: true })
-            : res.send({ admin: false });
+          user?.role === "tourGuide"
+            ? res.send({ tourGuide: true })
+            : res.send({ tourGuide: false });
         }
       }
     );
     app.patch(
       "/users/admin/:id",
-      verifytoken,
-      verifyAdmin,
+
       async (req, res) => {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -480,11 +548,92 @@ async function run() {
         res.send(result);
       }
     );
-    app.get("/users", verifytoken, verifyAdmin, async (req, res) => {
-      const cursor = userCollection.find();
-      const result = await cursor.toArray();
-      res.send(result);
-      console.log(req.cookies);
+    app.patch(
+      "/users/tourGuide/:email",
+      // verifytoken,
+      // verifyAdmin,
+      async (req, res) => {
+        const email = req.params.email;
+        const query = { _email: email };
+        const updatedDoc = {
+          $set: {
+            role: "tourGuide",
+          },
+        };
+        const result = await userCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      }
+    );
+
+    // app.get("/api/users", async (req, res) => {
+    //   const { search, role } = req.query;
+    //   let filter = {};
+
+    //   if (search) {
+    //     filter.$or = [
+    //       { displayName: { $regex: search, $options: "i" } },
+    //       { email: { $regex: search, $options: "i" } },
+    //     ];
+    //   }
+
+    //   if (role && role !== "all") {
+    //     filter.role = role;
+    //   }
+
+    //   await client.connect();
+    //   const database = client.db("your-database-name");
+    //   const usersCollection = database.collection("users");
+    //   const users = await usersCollection.find(filter).toArray();
+    //   res.json(users);
+    // });
+
+    //  app.get("/users", async (req, res) => {
+
+    //      const { search, role } = req.query;
+    //      let filter = {};
+
+    //      if (search) {
+    //        filter.$or = [
+    //          { displayName: { $regex: search, $options: "i" } },
+    //          { email: { $regex: search, $options: "i" } },
+    //        ];
+    //      }
+
+    //      if (role && role !== "all") {
+    //        filter.role = role;
+    //      }
+
+    //      const users = await userCollection.find(filter).toArray();
+    //      res.send(users);
+    //  });
+
+    // app.get("/users", async (req, res) => {
+    //   const cursor = userCollection.find();
+    //   const result = await cursor.toArray();
+    //   res.send(result);
+    //   console.log(req.cookies);
+    // });
+
+    app.get("/users", async (req, res) => {
+      const { search, role } = req.query;
+      let filter = {};
+
+      // Search filter (displayName or email)
+      if (search) {
+        filter.$or = [
+          { displayName: { $regex: search, $options: "i" } }, // Match displayName
+          { email: { $regex: search, $options: "i" } },
+        ];
+      }
+
+      // Role filter
+      if (role && role !== "all") {
+        filter.role = role; // Direct match for role
+      }
+      console.log("role", filter);
+      // Get users from MongoDB
+      const users = await userCollection.find(filter).toArray();
+      res.send(users);
     });
     app.post("/users", async (req, res) => {
       const newUser = req.body;
@@ -498,6 +647,19 @@ async function run() {
       res.send(result);
     });
 
+    app.patch("/user/:email", async (req, res) => {
+      const email = req.params.email;
+      const data = req.body;
+      const filter = { email: email };
+      const updatedUserInfo = {
+        $set: {
+          displayName: data.name,
+          photoURL: data.photoURL,
+        },
+      };
+      const result = await userCollection.updateOne(filter, updatedUserInfo);
+      res.send(result);
+    });
     app.patch("/users", async (req, res) => {
       const email = req.body.email;
       const filter = { email };
@@ -518,10 +680,10 @@ async function run() {
     });
 
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
